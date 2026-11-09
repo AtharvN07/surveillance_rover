@@ -1,6 +1,6 @@
 """
 camera.py — Non-blocking CSI/USB camera capture for the Jetson Nano.
-Provides async frame access and MJPEG byte generation for streaming.
+IMX219 CSI camera on /dev/video0 via GStreamer nvarguscamerasrc.
 """
 import asyncio
 import logging
@@ -16,15 +16,24 @@ logger = logging.getLogger("rover.camera")
 
 
 def _gstreamer_pipeline(cfg: RoverConfig) -> str:
-    """GStreamer pipeline string for the Jetson CSI camera."""
+    """GStreamer pipeline for Jetson Nano IMX219 CSI camera."""
     return (
         f"nvarguscamerasrc sensor-id=0 ! "
-        f"video/x-raw(memory:NVMM),width={cfg.camera_width},height={cfg.camera_height},"
-        f"format=NV12,framerate={cfg.camera_fps}/1 ! "
+        f"video/x-raw(memory:NVMM), "
+        f"width=(int){cfg.camera_width}, height=(int){cfg.camera_height}, "
+        f"format=(string)NV12, framerate=(fraction){cfg.camera_fps}/1 ! "
         f"nvvidconv flip-method={cfg.camera_flip} ! "
-        f"video/x-raw,width={cfg.camera_width},height={cfg.camera_height},format=BGRx ! "
-        f"videoconvert ! video/x-raw,format=BGR ! appsink drop=1"
+        f"video/x-raw, width=(int){cfg.camera_width}, height=(int){cfg.camera_height}, "
+        f"format=(string)BGRx ! "
+        f"videoconvert ! "
+        f"video/x-raw, format=(string)BGR ! "
+        f"appsink max-buffers=1 drop=true sync=false"
     )
+
+
+def _v4l2_pipeline(cfg: RoverConfig) -> str:
+    """Fallback: open /dev/video0 directly via V4L2 (no GStreamer needed)."""
+    return f"v4l2src device=/dev/video0 ! video/x-raw,width={cfg.camera_width},height={cfg.camera_height},framerate={cfg.camera_fps}/1 ! videoconvert ! appsink max-buffers=1 drop=true sync=false"
 
 
 class CameraStream:
@@ -52,19 +61,44 @@ class CameraStream:
         logger.info("Camera stopped")
 
     def _open_camera(self) -> bool:
+        # Try 1: GStreamer CSI pipeline (best quality, hardware accelerated)
         if self.cfg.use_csi:
             pipeline = _gstreamer_pipeline(self.cfg)
+            logger.info("Trying GStreamer CSI pipeline...")
             cap = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
-        else:
-            cap = cv2.VideoCapture(0)
-            cap.set(cv2.CAP_PROP_FRAME_WIDTH,  self.cfg.camera_width)
-            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.cfg.camera_height)
-            cap.set(cv2.CAP_PROP_FPS,          self.cfg.camera_fps)
+            if cap.isOpened():
+                ret, frame = cap.read()
+                if ret and frame is not None:
+                    self._cap = cap
+                    logger.info("CSI camera opened via GStreamer")
+                    return True
+                cap.release()
+            logger.warning("GStreamer CSI failed, trying V4L2 direct...")
 
+        # Try 2: Direct V4L2 /dev/video0 (works for CSI exposed as V4L2)
+        cap = cv2.VideoCapture(0, cv2.CAP_V4L2)
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH,  self.cfg.camera_width)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.cfg.camera_height)
+        cap.set(cv2.CAP_PROP_FPS,          self.cfg.camera_fps)
         if cap.isOpened():
-            self._cap = cap
-            return True
-        logger.error("Failed to open camera")
+            ret, frame = cap.read()
+            if ret and frame is not None:
+                self._cap = cap
+                logger.info("Camera opened via V4L2 /dev/video0")
+                return True
+            cap.release()
+
+        # Try 3: OpenCV default fallback
+        cap = cv2.VideoCapture(0)
+        if cap.isOpened():
+            ret, frame = cap.read()
+            if ret and frame is not None:
+                self._cap = cap
+                logger.info("Camera opened via OpenCV default")
+                return True
+            cap.release()
+
+        logger.error("All camera open attempts failed")
         return False
 
     async def _capture_loop(self):
@@ -77,9 +111,13 @@ class CameraStream:
 
         while self._running:
             ret, frame = await loop.run_in_executor(None, self._cap.read)
-            if not ret:
-                logger.warning("Camera read failed — retrying")
-                await asyncio.sleep(0.1)
+            if not ret or frame is None:
+                logger.warning("Camera read failed — retrying in 0.5s")
+                await asyncio.sleep(0.5)
+                # Attempt reopen
+                self._cap.release()
+                if not self._open_camera():
+                    break
                 continue
 
             async with self._lock:
@@ -93,7 +131,6 @@ class CameraStream:
                 fps_counter = 0
                 fps_start = time.time()
 
-            # Yield control without sleeping to maximise capture rate
             await asyncio.sleep(0)
 
     async def get_frame(self) -> Optional[np.ndarray]:

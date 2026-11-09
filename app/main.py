@@ -1,10 +1,12 @@
 """
 main.py — FastAPI application entry point for the Surveillance Rover.
-Run with: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+Compatible with FastAPI 0.83 / Pydantic v1 / Python 3.6+
+
+Run with:
+  python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 """
 import asyncio
 import logging
-from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -17,6 +19,7 @@ from app.api.routes import router as http_router
 from app.api.websocket import router as ws_router
 from app.api.telemetry import TelemetryCollector
 from app.control.safety_controller import SafetyController
+from app.control.velocity_controller import VelocityController
 
 logging.basicConfig(
     level=logging.INFO,
@@ -24,56 +27,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger("rover.main")
 
-# ── Shared application state ─────────────────────────────────────────────────
-class AppState:
-    arduino: ArduinoInterface = None
-    camera: CameraStream = None
-    telemetry: TelemetryCollector = None
-    safety: SafetyController = None
-    mode: str = "manual"          # manual | explore | patrol
-    running: bool = False
-
-state = AppState()
-
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Start and stop all hardware interfaces cleanly."""
-    logger.info("Rover startup — initialising hardware …")
-
-    state.arduino = ArduinoInterface(config)
-    await state.arduino.connect()
-
-    state.camera = CameraStream(config)
-    await state.camera.start()
-
-    state.safety = SafetyController(state.arduino, config)
-    state.safety.start()
-
-    state.telemetry = TelemetryCollector(state.arduino, state.camera, config)
-    state.running = True
-
-    logger.info("Rover ready.")
-    yield
-
-    logger.info("Rover shutdown — stopping hardware …")
-    state.running = False
-    state.safety.stop()
-    await state.arduino.emergency_stop()
-    await state.camera.stop()
-    logger.info("Shutdown complete.")
-
 
 # ── Application factory ───────────────────────────────────────────────────────
-app = FastAPI(
-    title="Surveillance Rover API",
-    version="1.0.0",
-    lifespan=lifespan,
-)
+app = FastAPI(title="Surveillance Rover API", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=config.cors_origins,
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -82,14 +42,54 @@ app.add_middleware(
 app.include_router(http_router, prefix="/api")
 app.include_router(ws_router)
 
-# Serve the dashboard frontend (built React app)
+# Serve dashboard
 try:
     app.mount("/", StaticFiles(directory="dashboard/frontend/dist", html=True), name="static")
 except RuntimeError:
     logger.warning("Dashboard build not found — serving API only.")
 
 
-# ── Expose state to routers via request.app.state ─────────────────────────────
+# ── Shared state (attached to app.state so routers can access it) ─────────────
+class RoverState:
+    arduino: ArduinoInterface = None
+    camera: CameraStream = None
+    telemetry: TelemetryCollector = None
+    safety: SafetyController = None
+    velocity: VelocityController = None
+    mode: str = "manual"
+    running: bool = False
+
+
+rover = RoverState()
+app.state.rover = rover
+
+
 @app.on_event("startup")
-async def expose_state():
-    app.state.rover = state
+async def startup():
+    logger.info("Rover startup — initialising hardware ...")
+
+    rover.arduino = ArduinoInterface(config)
+    await rover.arduino.connect()
+
+    rover.camera = CameraStream(config)
+    await rover.camera.start()
+
+    rover.safety = SafetyController(rover.arduino, config)
+    rover.safety.start()
+
+    rover.velocity = VelocityController(rover.arduino, config)
+
+    rover.telemetry = TelemetryCollector(rover.arduino, rover.camera, config)
+    rover.running = True
+
+    logger.info("Rover ready.")
+
+
+@app.on_event("shutdown")
+async def shutdown():
+    logger.info("Rover shutdown — stopping hardware ...")
+    rover.running = False
+    rover.safety.stop()
+    await rover.arduino.emergency_stop()
+    await rover.camera.stop()
+    logger.info("Shutdown complete.")

@@ -1,4 +1,4 @@
-# Jetson Nano Python dependencies
+# Jetson Nano (JetPack 4.6, Python 3.6/3.8, aarch64)
 # Install: pip3 install -r requirements.txt --break-system-packages
 
 # Web framework
@@ -11,9 +11,11 @@ pydantic==2.9.2
 # Hardware / serial
 pyserial==3.5
 
-# Compute vision
+# Computer vision (pre-built for aarch64)
+# numpy: JetPack 4.6 caps at 1.24.x on aarch64
+numpy==1.24.4
+# opencv-python headless is smaller; use system opencv if already installed
 opencv-python==4.10.0.84
-numpy==1.26.4
 
 # System monitoring
 psutil==6.0.0
