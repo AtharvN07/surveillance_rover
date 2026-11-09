@@ -2,539 +2,285 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Surveillance Rover</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Rover</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.min.js"></script>
 <style>
-:root {
-  --bg: #0b0d10; --card: #13161b; --border: #1f2530;
-  --fg: #d8dde6; --muted: #4a5568; --accent: #00e5a0;
-  --danger: #ff3b3b; --warn: #f5a623; --info: #4da6ff;
-  color-scheme: dark;
-}
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-body { font-family: 'SF Mono', 'Consolas', monospace; background: var(--bg); color: var(--fg); min-height: 100vh; font-size: 13px; }
-#app { display: grid; grid-template-columns: 1fr 340px; grid-template-rows: 48px 1fr 1fr; height: 100vh; gap: 0; }
-#topbar { grid-column: 1 / -1; background: var(--card); border-bottom: 1px solid var(--border); display: flex; align-items: center; padding: 0 16px; gap: 16px; }
-#topbar h1 { font-size: 14px; color: var(--accent); letter-spacing: 2px; text-transform: uppercase; }
-.dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; background: var(--muted); margin-right: 4px; }
-.dot.ok { background: var(--accent); }
-.dot.err { background: var(--danger); }
-.dot.warn { background: var(--warn); }
-.sep { flex: 1; }
-.tag { padding: 2px 8px; border-radius: 3px; font-size: 11px; background: #1f2d1f; color: var(--accent); border: 1px solid #2a3a2a; }
-.tag.manual { background: #2d1f1f; color: #ff8888; border-color: #3a2a2a; }
-.tag.explore { background: #1f2a2d; color: var(--info); border-color: #2a3540; }
-.tag.patrol { background: #221f2d; color: #b888ff; border-color: #3a2a40; }
+:root{--bg:#0b0d10;--card:#13161b;--b:#1f2530;--fg:#d8dde6;--m:#4a5568;--a:#00e5a0;--d:#ff3b3b;color-scheme:dark}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'SF Mono',Consolas,monospace;background:var(--bg);color:var(--fg);height:100vh;overflow:hidden;font-size:12px}
+#app{display:grid;grid-template-columns:1fr 300px;grid-template-rows:40px 1fr;height:100vh}
+#top{grid-column:1/-1;background:var(--card);border-bottom:1px solid var(--b);display:flex;align-items:center;padding:0 12px;gap:12px}
+#top h1{font-size:12px;color:var(--a);letter-spacing:2px;text-transform:uppercase}
+.dot{width:7px;height:7px;border-radius:50%;display:inline-block;background:var(--m);margin-right:3px;transition:background .3s}
+.ok{background:var(--a)}.err{background:var(--d)}
+.sep{flex:1}
+.tag{padding:1px 7px;border-radius:3px;font-size:10px}
+.tm{background:#2d1f1f;color:#ff8888}.te{background:#1f2a2d;color:#4da6ff}.tp{background:#221f2d;color:#b888ff}
+#left{display:flex;flex-direction:column;overflow:hidden}
+#cf{flex:1;background:#000;position:relative}
+#ci{width:100%;height:100%;object-fit:cover;display:block}
+#hud{position:absolute;top:6px;left:6px;right:6px;display:flex;justify-content:space-between;pointer-events:none}
+.chip{background:rgba(0,0,0,.7);border:1px solid var(--b);padding:1px 7px;border-radius:3px;font-size:10px;color:var(--a)}
+#mw{height:180px;background:#0a0c0f;border-top:1px solid var(--b);position:relative}
+#mc{width:100%;height:100%}
+#pose{position:absolute;bottom:4px;right:6px;font-size:9px;color:var(--m)}
+#right{border-left:1px solid var(--b);overflow-y:auto;background:var(--card)}
+.p{border-bottom:1px solid var(--b);padding:8px 10px}
+.pt{font-size:9px;color:var(--m);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px}
 
-/* Left column: camera + map */
-#left-col { grid-column: 1; grid-row: 2 / 4; display: flex; flex-direction: column; border-right: 1px solid var(--border); }
-#camera-panel { flex: 1; position: relative; background: #000; overflow: hidden; min-height: 0; }
-#camera-panel img { width: 100%; height: 100%; object-fit: cover; display: block; }
-#cam-overlay { position: absolute; top: 8px; left: 8px; right: 8px; display: flex; justify-content: space-between; pointer-events: none; }
-.hud-chip { background: rgba(0,0,0,0.6); border: 1px solid var(--border); padding: 2px 7px; border-radius: 3px; font-size: 11px; color: var(--accent); }
-#hud-alert { position: absolute; bottom: 8px; left: 50%; transform: translateX(-50%); padding: 4px 12px; border-radius: 4px; background: rgba(255,60,60,0.85); color: #fff; font-size: 11px; display: none; }
-#map-panel { height: 220px; border-top: 1px solid var(--border); position: relative; background: #0a0c0f; }
-#map-canvas { width: 100%; height: 100%; }
-#pose-info { position: absolute; bottom: 6px; right: 8px; font-size: 10px; color: var(--muted); text-align: right; }
+/* Digital speed buttons */
+#speed-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:3px;margin-bottom:8px}
+.spd-btn{padding:6px 2px;border:1px solid var(--b);background:var(--bg);color:var(--m);border-radius:3px;cursor:pointer;font-family:inherit;font-size:10px;text-align:center;transition:all .1s}
+.spd-btn:hover{border-color:var(--a);color:var(--a)}
+.spd-btn.active{background:var(--a);color:#000;border-color:var(--a);font-weight:bold}
 
-/* Right column */
-#right-col { grid-column: 2; grid-row: 2 / 4; display: flex; flex-direction: column; overflow-y: auto; }
-.panel { border-bottom: 1px solid var(--border); padding: 10px 12px; }
-.panel-title { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
+/* Direction pad */
+#dpad{display:grid;grid-template-columns:repeat(3,1fr);grid-template-rows:repeat(3,1fr);gap:3px;width:130px;height:130px;margin:0 auto}
+.dp{border:1px solid var(--b);background:var(--bg);border-radius:4px;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:16px;transition:background .08s;user-select:none}
+.dp:active,.dp.pressed{background:var(--a);color:#000}
+.dp.empty{background:transparent;border:none;cursor:default}
 
-/* Joystick */
-#js-container { display: flex; align-items: center; gap: 12px; }
-#joystick-wrap { position: relative; width: 140px; height: 140px; flex-shrink: 0; }
-#joystick-base { width: 140px; height: 140px; border-radius: 50%; background: radial-gradient(circle, #1a2030 0%, #0d0f14 100%); border: 2px solid var(--border); cursor: crosshair; touch-action: none; user-select: none; }
-.js-ring { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); border-radius: 50%; border: 1px dashed #2a3040; pointer-events: none; }
-#js-thumb { position: absolute; top: 50%; left: 50%; width: 44px; height: 44px; background: radial-gradient(circle, var(--accent) 0%, #008860 100%); border-radius: 50%; transform: translate(-50%,-50%); pointer-events: none; box-shadow: 0 0 12px rgba(0,229,160,0.4); transition: box-shadow 50ms; }
-#js-side { flex: 1; display: flex; flex-direction: column; gap: 6px; }
-.motor-bar-wrap { display: flex; align-items: center; gap: 6px; font-size: 10px; }
-.motor-bar-wrap span { width: 28px; color: var(--muted); }
-.motor-bar-outer { flex: 1; height: 8px; background: var(--border); border-radius: 4px; overflow: hidden; }
-.motor-bar-inner { height: 100%; background: var(--accent); width: 0%; transition: width 50ms, background 50ms; border-radius: 4px; }
-.motor-bar-inner.rev { background: var(--warn); }
-.speed-row { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
-.speed-row label { font-size: 10px; color: var(--muted); white-space: nowrap; }
-input[type=range] { flex: 1; accent-color: var(--accent); }
+/* Motor bars */
+.mb-wrap{display:flex;align-items:center;gap:5px;margin-top:6px}
+.mb-wrap span{width:8px;color:var(--m);font-size:9px}
+.mb-out{flex:1;height:5px;background:var(--b);border-radius:3px;overflow:hidden}
+.mb-in{height:100%;background:var(--a);width:0%;transition:width 60ms;border-radius:3px}
+.mb-in.rev{background:var(--d)}
 
-/* Telemetry grid */
-.tel-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
-.tel-cell { background: var(--bg); border: 1px solid var(--border); border-radius: 3px; padding: 4px 6px; }
-.tel-cell .lbl { font-size: 9px; color: var(--muted); text-transform: uppercase; }
-.tel-cell .val { font-size: 13px; color: var(--accent); font-weight: bold; }
-.tel-cell .val.warn { color: var(--warn); }
+/* Mode buttons */
+.btn-row{display:flex;gap:4px}
+.btn{padding:5px 8px;border:1px solid var(--b);background:var(--bg);color:var(--fg);border-radius:3px;cursor:pointer;font-size:10px;font-family:inherit;transition:background .1s;flex:1;text-align:center}
+.btn:hover{background:#1f2838}.btn.active{background:var(--a);color:#000;border-color:var(--a)}
+#estop{width:100%;padding:9px;background:var(--d);color:#fff;border:none;border-radius:4px;font-size:13px;font-weight:bold;cursor:pointer;letter-spacing:2px;margin-top:5px;font-family:inherit}
+#estop.stopped{background:#333}
 
-/* Buttons */
-.btn-row { display: flex; gap: 6px; flex-wrap: wrap; }
-.btn { padding: 6px 10px; border: 1px solid var(--border); background: var(--card); color: var(--fg); border-radius: 4px; cursor: pointer; font-size: 12px; font-family: inherit; transition: background 120ms, color 120ms; flex: 1; text-align: center; }
-.btn:hover { background: #1f2838; }
-.btn.active, .btn.accent { background: var(--accent); color: #000; border-color: var(--accent); }
-.btn.danger { background: var(--danger); color: #fff; border-color: var(--danger); }
-.btn.danger:hover { background: #cc2222; }
-.btn.sm { padding: 4px 8px; font-size: 11px; flex: initial; }
-#estop { width: 100%; padding: 10px; background: var(--danger); color: #fff; border: none; border-radius: 5px; font-size: 15px; font-weight: bold; cursor: pointer; letter-spacing: 2px; margin-top: 6px; font-family: inherit; transition: background 120ms; }
-#estop:hover { background: #cc0000; }
-
-/* Waypoints list */
-#wp-list { max-height: 100px; overflow-y: auto; margin-bottom: 6px; }
-.wp-item { display: flex; align-items: center; justify-content: space-between; padding: 3px 6px; border: 1px solid var(--border); border-radius: 3px; margin-bottom: 3px; font-size: 11px; }
-.wp-item.active-wp { border-color: var(--accent); color: var(--accent); }
-.wp-item .del { cursor: pointer; color: var(--danger); margin-left: 8px; }
-
-/* Status footer */
-#status-footer { font-size: 10px; color: var(--muted); padding: 4px 8px; background: var(--card); border-top: 1px solid var(--border); display: flex; gap: 12px; grid-column: 1 / -1; }
+/* Telemetry */
+.tg{display:grid;grid-template-columns:1fr 1fr;gap:3px}
+.tc{background:var(--bg);border:1px solid var(--b);border-radius:3px;padding:3px 5px}
+.tc .l{font-size:8px;color:var(--m);text-transform:uppercase}
+.tc .v{font-size:11px;color:var(--a);font-weight:bold}
+.tc .v.w{color:var(--d)}
 </style>
 </head>
 <body>
 <div id="app">
-
-<!-- Top Bar -->
-<header id="topbar">
-  <h1>&#x25C6; Surveillance Rover</h1>
-  <span><span class="dot" id="dot-arduino"></span><span id="lbl-arduino">Arduino</span></span>
-  <span><span class="dot" id="dot-camera"></span><span id="lbl-camera">Camera</span></span>
+<header id="top">
+  <h1>&#x25C6; Rover</h1>
+  <span><span class="dot" id="ds"></span>Server</span>
+  <span><span class="dot" id="da"></span>Arduino</span>
+  <span><span class="dot" id="dc"></span>Camera</span>
   <span class="sep"></span>
-  <span class="tag manual" id="mode-badge">MANUAL</span>
-  <span id="clock" style="color:var(--muted);font-size:11px"></span>
+  <span class="tag tm" id="mtag">MANUAL</span>
+  <span id="clk" style="color:var(--m);font-size:10px"></span>
 </header>
 
-<!-- Left: Camera + Map -->
-<div id="left-col">
-  <div id="camera-panel">
-    <img id="cam-img" src="" alt="Camera Feed" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%22640%22 height=%22480%22><rect fill=%22%230b0d10%22 width=%22640%22 height=%22480%22/><text x=%22320%22 y=%22240%22 fill=%22%234a5568%22 text-anchor=%22middle%22 font-size=%2220%22>No Camera Signal</text></svg>'">
-    <div id="cam-overlay">
-      <span class="hud-chip" id="hud-fps">FPS: —</span>
-      <span class="hud-chip" id="hud-lat">LAT: —ms</span>
+<div id="left">
+  <div id="cf">
+    <img id="ci" src="/api/camera/stream" alt="">
+    <div id="hud">
+      <span class="chip" id="hfps">FPS: —</span>
+      <span class="chip" id="hlat">LAT: —ms</span>
     </div>
-    <div id="hud-alert">&#x26A0; OBSTACLE DETECTED</div>
   </div>
-  <div id="map-panel">
-    <canvas id="map-canvas"></canvas>
-    <div id="pose-info">X: 0.00m&nbsp; Y: 0.00m&nbsp; &theta;: 0&deg;</div>
-  </div>
+  <div id="mw"><canvas id="mc"></canvas><div id="pose">X:0.00 Y:0.00 θ:0°</div></div>
 </div>
 
-<!-- Right: Controls -->
-<div id="right-col">
+<div id="right">
 
-  <!-- Joystick -->
-  <div class="panel">
-    <div class="panel-title">Drive Control</div>
-    <div id="js-container">
-      <div id="joystick-wrap">
-        <canvas id="joystick-base" width="140" height="140"></canvas>
-        <div class="js-ring" style="width:80px;height:80px"></div>
-        <div class="js-ring" style="width:130px;height:130px"></div>
-        <div id="js-thumb"></div>
-      </div>
-      <div id="js-side">
-        <div class="motor-bar-wrap"><span>L</span><div class="motor-bar-outer"><div class="motor-bar-inner" id="mbar-l"></div></div></div>
-        <div class="motor-bar-wrap"><span>R</span><div class="motor-bar-outer"><div class="motor-bar-inner" id="mbar-r"></div></div></div>
-        <div class="speed-row">
-          <label>Speed</label>
-          <input type="range" id="speed-slider" min="10" max="100" value="60">
-          <span id="speed-lbl" style="font-size:10px;width:28px">60%</span>
-        </div>
-      </div>
+  <!-- Speed presets -->
+  <div class="p">
+    <div class="pt">Speed Preset</div>
+    <div id="speed-grid">
+      <button class="spd-btn" data-v="44" onclick="setSpd(this)">20%</button>
+      <button class="spd-btn" data-v="88" onclick="setSpd(this)">40%</button>
+      <button class="spd-btn active" data-v="132" onclick="setSpd(this)">60%</button>
+      <button class="spd-btn" data-v="176" onclick="setSpd(this)">80%</button>
+      <button class="spd-btn" data-v="220" onclick="setSpd(this)">MAX</button>
     </div>
+
+    <!-- D-Pad -->
+    <div id="dpad">
+      <div class="dp empty"></div>
+      <div class="dp" id="dp-fwd" data-dir="fwd">▲</div>
+      <div class="dp empty"></div>
+      <div class="dp" id="dp-lft" data-dir="lft">◀</div>
+      <div class="dp" id="dp-stp" data-dir="stp" style="font-size:10px;color:var(--d)">■</div>
+      <div class="dp" id="dp-rgt" data-dir="rgt">▶</div>
+      <div class="dp empty"></div>
+      <div class="dp" id="dp-rev" data-dir="rev">▼</div>
+      <div class="dp empty"></div>
+    </div>
+
+    <div class="mb-wrap"><span>L</span><div class="mb-out"><div class="mb-in" id="ml"></div></div></div>
+    <div class="mb-wrap"><span>R</span><div class="mb-out"><div class="mb-in" id="mr"></div></div></div>
   </div>
 
   <!-- Mode -->
-  <div class="panel">
-    <div class="panel-title">Operating Mode</div>
+  <div class="p">
+    <div class="pt">Mode</div>
     <div class="btn-row">
-      <button class="btn active" id="btn-manual" onclick="setMode('manual')">Manual</button>
-      <button class="btn" id="btn-explore" onclick="setMode('explore')">Explore</button>
-      <button class="btn" id="btn-patrol" onclick="setMode('patrol')">Patrol</button>
+      <button class="btn active" id="bm" onclick="setMode('manual')">Manual</button>
+      <button class="btn" id="be" onclick="setMode('explore')">Explore</button>
+      <button class="btn" id="bp" onclick="setMode('patrol')">Patrol</button>
     </div>
   </div>
 
   <!-- Safety -->
-  <div class="panel">
-    <div class="panel-title">Safety</div>
-    <button id="estop" onclick="triggerEstop()">&#x23F9; EMERGENCY STOP</button>
-    <div class="btn-row" style="margin-top:6px">
-      <button class="btn sm" onclick="resumeEstop()">Resume</button>
-      <button class="btn sm" onclick="saveMap()">Save Map</button>
-      <button class="btn sm" onclick="loadMap()">Load Map</button>
+  <div class="p">
+    <div class="pt">Safety</div>
+    <button id="estop" onclick="doEstop()">⏹ EMERGENCY STOP</button>
+    <div class="btn-row" style="margin-top:5px">
+      <button class="btn" onclick="doResume()">Resume</button>
+      <button class="btn" onclick="doSave()">Save Map</button>
     </div>
   </div>
 
   <!-- Telemetry -->
-  <div class="panel">
-    <div class="panel-title">Telemetry</div>
-    <div class="tel-grid">
-      <div class="tel-cell"><div class="lbl">CPU</div><div class="val" id="t-cpu">—</div></div>
-      <div class="tel-cell"><div class="lbl">RAM</div><div class="val" id="t-ram">—</div></div>
-      <div class="tel-cell"><div class="lbl">Cam FPS</div><div class="val" id="t-fps">—</div></div>
-      <div class="tel-cell"><div class="lbl">Temp</div><div class="val" id="t-temp">—</div></div>
-      <div class="tel-cell"><div class="lbl">Motor L</div><div class="val" id="t-ml">0</div></div>
-      <div class="tel-cell"><div class="lbl">Motor R</div><div class="val" id="t-mr">0</div></div>
+  <div class="p">
+    <div class="pt">Telemetry</div>
+    <div class="tg">
+      <div class="tc"><div class="l">CPU</div><div class="v" id="tcpu">—</div></div>
+      <div class="tc"><div class="l">RAM</div><div class="v" id="tram">—</div></div>
+      <div class="tc"><div class="l">FPS</div><div class="v" id="tfps">—</div></div>
+      <div class="tc"><div class="l">Latency</div><div class="v" id="tlat">—</div></div>
+      <div class="tc"><div class="l">L PWM</div><div class="v" id="tml">0</div></div>
+      <div class="tc"><div class="l">R PWM</div><div class="v" id="tmr">0</div></div>
     </div>
   </div>
-
-  <!-- Waypoints -->
-  <div class="panel">
-    <div class="panel-title">Patrol Waypoints</div>
-    <div id="wp-list"></div>
-    <div class="btn-row">
-      <button class="btn sm" onclick="addWaypoint()">+ Add Current Pos</button>
-      <button class="btn sm" onclick="clearWaypoints()">Clear All</button>
-    </div>
-  </div>
-
 </div>
-
 </div>
 
 <script>
-// ── State ──────────────────────────────────────────────────────────────────
-const HOST = window.location.host;
-const WS_URL = `ws://${HOST}/ws/control`;
-const TEL_URL = `ws://${HOST}/ws/telemetry`;
-const MAP_URL = `ws://${HOST}/ws/map`;
+const io_sock = io({transports:['websocket'], upgrade:false, reconnection:true, reconnectionDelay:500});
+let spd=132, mode='manual', estopOn=false, lastPing=Date.now();
+let curL=0, curR=0, dirPressed=null, cmdInterval;
 
-let ws, wsTel, wsMap;
-let mode = 'manual';
-let speedPct = 0.6;
-let jsActive = false;
-let jsX = 0, jsY = 0;
-let cmdInterval;
-let poseX = 0, poseY = 0, poseTheta = 0;
-let waypoints = [];
-let activeWpIdx = -1;
-let estopActive = false;
-let lastPing = Date.now();
-let latencyMs = 0;
-
-// ── Clock ─────────────────────────────────────────────────────────────────
-setInterval(() => {
-  const now = new Date();
-  document.getElementById('clock').textContent = now.toLocaleTimeString();
-}, 1000);
-
-// ── WebSocket helpers ─────────────────────────────────────────────────────
-function connectWS() {
-  ws = new WebSocket(WS_URL);
-  ws.onopen = () => {
-    updateDot('arduino', true);
-    pingLoop();
-  };
-  ws.onmessage = onWsMsg;
-  ws.onclose = () => {
-    updateDot('arduino', false);
-    setTimeout(connectWS, 3000);
-  };
-  ws.onerror = () => updateDot('arduino', false);
-
-  wsTel = new WebSocket(TEL_URL);
-  wsTel.onmessage = onTelMsg;
-  wsTel.onclose = () => setTimeout(() => { wsTel = new WebSocket(TEL_URL); wsTel.onmessage = onTelMsg; }, 3000);
-
-  wsMap = new WebSocket(MAP_URL);
-  wsMap.onmessage = onMapMsg;
-  wsMap.onclose = () => setTimeout(() => { wsMap = new WebSocket(MAP_URL); wsMap.onmessage = onMapMsg; }, 3000);
-}
-
-function wsSend(obj) {
-  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
-}
-
-function pingLoop() {
-  setInterval(() => {
-    lastPing = Date.now();
-    wsSend({ type: 'ping' });
-  }, 1000);
-}
-
-function onWsMsg(ev) {
-  const msg = JSON.parse(ev.data);
-  if (msg.type === 'pong') {
-    latencyMs = Date.now() - lastPing;
-    document.getElementById('hud-lat').textContent = `LAT: ${latencyMs}ms`;
-  }
-}
-
-function onTelMsg(ev) {
-  const d = JSON.parse(ev.data);
-  const warn = v => v > 80 ? 'warn' : '';
-  setText('t-cpu',  d.cpu_pct   != null ? d.cpu_pct + '%'   : '—', warn(d.cpu_pct));
-  setText('t-ram',  d.ram_pct   != null ? d.ram_pct + '%'   : '—', warn(d.ram_pct));
-  setText('t-fps',  d.camera_fps != null ? d.camera_fps.toFixed(1) : '—');
-  setText('t-temp', d.temp_c    != null ? d.temp_c + '°C'  : '—', d.temp_c > 70 ? 'warn' : '');
-  setText('t-ml',   d.motor_left  != null ? d.motor_left  : 0);
-  setText('t-mr',   d.motor_right != null ? d.motor_right : 0);
-  updateDot('camera', d.camera_connected);
-  updateDot('arduino', d.arduino_connected);
-  document.getElementById('hud-fps').textContent = `FPS: ${d.camera_fps ? d.camera_fps.toFixed(1) : '—'}`;
-}
-
-function onMapMsg(ev) {
-  const d = JSON.parse(ev.data);
-  if (d.map)  drawMap(d.map);
-  if (d.pose) updatePose(d.pose);
-}
-
-function setText(id, val, cls='') {
-  const el = document.getElementById(id);
-  el.textContent = val;
-  el.className = 'val' + (cls ? ' ' + cls : '');
-}
-
-function updateDot(name, ok) {
-  const d = document.getElementById('dot-' + name);
-  if (d) { d.className = 'dot ' + (ok ? 'ok' : 'err'); }
-}
-
-// ── Mode switching ────────────────────────────────────────────────────────
-function setMode(m) {
-  mode = m;
-  ['manual','explore','patrol'].forEach(id => {
-    document.getElementById('btn-' + id).classList.toggle('active', id === m);
-  });
-  const badge = document.getElementById('mode-badge');
-  badge.textContent = m.toUpperCase();
-  badge.className = 'tag ' + m;
-  wsSend({ type: 'mode', value: m });
-}
-
-// ── Joystick ──────────────────────────────────────────────────────────────
-const jsBase = document.getElementById('joystick-base');
-const jsThumb = document.getElementById('js-thumb');
-const jsR = 57; // usable radius in px
-
-function getRelXY(e) {
-  const r = jsBase.getBoundingClientRect();
-  const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
-  const src = e.touches ? e.touches[0] : e;
-  return [src.clientX - cx, src.clientY - cy];
-}
-
-function applyJS(dx, dy) {
-  const dist = Math.hypot(dx, dy);
-  const clamped = dist > jsR ? jsR / dist : 1;
-  jsX = (dx * clamped) / jsR;
-  jsY = -(dy * clamped) / jsR;  // y inverted: up = forward
-  const px = dx * clamped, py = dy * clamped;
-  jsThumb.style.left = (70 + px) + 'px';
-  jsThumb.style.top  = (70 + py) + 'px';
-  updateMotorBars(jsX, jsY);
-}
-
-function resetJS() {
-  jsX = jsY = 0;
-  jsActive = false;
-  jsThumb.style.left = '70px';
-  jsThumb.style.top  = '70px';
-  updateMotorBars(0, 0);
-  wsSend({ type: 'joystick', x: 0, y: 0 });
-}
-
-jsBase.addEventListener('mousedown', e => { jsActive = true; applyJS(...getRelXY(e)); });
-jsBase.addEventListener('touchstart', e => { e.preventDefault(); jsActive = true; applyJS(...getRelXY(e)); }, { passive: false });
-window.addEventListener('mousemove', e => { if (jsActive) applyJS(...getRelXY(e)); });
-window.addEventListener('touchmove', e => { if (jsActive) { e.preventDefault(); applyJS(...getRelXY(e)); } }, { passive: false });
-window.addEventListener('mouseup', resetJS);
-window.addEventListener('touchend', resetJS);
-
-// Draw joystick background
-(function drawJSBase() {
-  const ctx = jsBase.getContext('2d');
-  const c = jsBase.width / 2;
-  // Outer ring
-  ctx.strokeStyle = '#1f2530'; ctx.lineWidth = 2;
-  ctx.beginPath(); ctx.arc(c, c, c - 2, 0, Math.PI * 2); ctx.stroke();
-  // Crosshairs
-  ctx.strokeStyle = '#1f2530'; ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.moveTo(c, 4); ctx.lineTo(c, c * 2 - 4); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(4, c); ctx.lineTo(c * 2 - 4, c); ctx.stroke();
-  // Inner ring
-  ctx.beginPath(); ctx.arc(c, c, jsR, 0, Math.PI * 2); ctx.stroke();
-})();
-
-// 50 Hz command loop
-cmdInterval = setInterval(() => {
-  if (!estopActive && mode === 'manual') {
-    wsSend({ type: 'joystick', x: jsX, y: jsY });
-  }
-}, 20);
-
-function updateMotorBars(x, y) {
-  // Differential: forward/back = y, turn = x
-  let l = (y + x) * speedPct;
-  let r = (y - x) * speedPct;
-  const mx = Math.max(Math.abs(l), Math.abs(r), 1);
-  l /= mx; r /= mx;
-  setBar('mbar-l', l);
-  setBar('mbar-r', r);
-}
-
-function setBar(id, v) {
-  const el = document.getElementById(id);
-  const pct = Math.abs(v) * 100;
-  el.style.width = pct + '%';
-  el.className = 'motor-bar-inner' + (v < 0 ? ' rev' : '');
-}
-
-document.getElementById('speed-slider').addEventListener('input', e => {
-  speedPct = parseInt(e.target.value) / 100;
-  document.getElementById('speed-lbl').textContent = e.target.value + '%';
+// ── Socket ──────────────────────────────────────────────────────────────────
+io_sock.on('connect', ()=>dot('ds',true));
+io_sock.on('disconnect', ()=>{ dot('ds',false); stopMotors(); });
+io_sock.on('pong_r', ()=>{
+  const lat = Date.now()-lastPing;
+  document.getElementById('hlat').textContent='LAT: '+lat+'ms';
+  document.getElementById('tlat').textContent=lat+'ms';
+});
+io_sock.on('tel', d=>{
+  dot('da', d.ard); dot('dc', d.cam);
+  document.getElementById('hfps').textContent='FPS: '+d.fps;
+  document.getElementById('tfps').textContent=d.fps;
+  if(d.cpu!=null) setV('tcpu', d.cpu+'%', d.cpu>80);
+  if(d.ram!=null) setV('tram', d.ram+'%', d.ram>85);
+  setV('tml', d.ml||0); setV('tmr', d.mr||0);
 });
 
-// ── Safety ────────────────────────────────────────────────────────────────
-function triggerEstop() {
-  estopActive = true;
-  wsSend({ type: 'estop' });
-  document.getElementById('estop').textContent = '✓ STOPPED';
-  document.getElementById('estop').style.background = '#444';
+function dot(id,ok){ const e=document.getElementById(id); if(e) e.className='dot '+(ok?'ok':'err'); }
+function setV(id,v,w=false){ const e=document.getElementById(id); if(e){e.textContent=v;e.className='v'+(w?' w':'');} }
+
+// Ping every second
+setInterval(()=>{ lastPing=Date.now(); io_sock.emit('ping_r'); }, 1000);
+setInterval(()=>{ document.getElementById('clk').textContent=new Date().toLocaleTimeString(); }, 1000);
+
+// ── Speed presets ───────────────────────────────────────────────────────────
+function setSpd(btn){
+  spd = parseInt(btn.dataset.v);
+  document.querySelectorAll('.spd-btn').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
 }
 
-function resumeEstop() {
-  estopActive = false;
-  wsSend({ type: 'estop_clear' });
-  document.getElementById('estop').textContent = '⏹ EMERGENCY STOP';
-  document.getElementById('estop').style.background = 'var(--danger)';
-}
-
-// ── Map rendering ──────────────────────────────────────────────────────────
-function drawMap(mapData) {
-  const canvas = document.getElementById('map-canvas');
-  const ctx = canvas.getContext('2d');
-  const W = canvas.offsetWidth, H = canvas.offsetHeight;
-  canvas.width = W; canvas.height = H;
-  if (!mapData || !mapData.cells) return;
-
-  const gw = mapData.width, gh = mapData.height;
-  const cells = mapData.cells;
-  const cw = W / gw, ch = H / gh;
-
-  ctx.clearRect(0, 0, W, H);
-  for (let r = 0; r < gh; r++) {
-    for (let c = 0; c < gw; c++) {
-      const v = cells[r * gw + c];
-      ctx.fillStyle = v === 2 ? '#3a1010' : v === 1 ? '#0d2018' : '#111418';
-      ctx.fillRect(c * cw, r * ch, cw + 0.5, ch + 0.5);
-    }
-  }
-
-  // Draw robot position
-  const oc = mapData.origin_col, or_ = mapData.origin_row;
-  const rx = (oc + poseX / (mapData.resolution || 0.05)) * cw;
-  const ry = (or_ + poseY / (mapData.resolution || 0.05)) * ch;
-
-  ctx.save();
-  ctx.translate(rx, ry);
-  ctx.rotate(poseTheta);
-  ctx.fillStyle = '#00e5a0';
-  ctx.beginPath(); ctx.moveTo(0, -8); ctx.lineTo(5, 5); ctx.lineTo(-5, 5); ctx.closePath();
-  ctx.fill();
-  ctx.restore();
-
-  // Draw waypoints
-  waypoints.forEach((wp, i) => {
-    const wx = (oc + wp.x / (mapData.resolution || 0.05)) * cw;
-    const wy = (or_ + wp.y / (mapData.resolution || 0.05)) * ch;
-    ctx.fillStyle = i === activeWpIdx ? '#f5a623' : '#4da6ff';
-    ctx.beginPath(); ctx.arc(wx, wy, 4, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = '#ffffff';
-    ctx.font = '9px monospace';
-    ctx.fillText(wp.name, wx + 5, wy - 3);
-  });
-}
-
-function updatePose(p) {
-  poseX = p.x || 0; poseY = p.y || 0; poseTheta = p.theta || 0;
-  document.getElementById('pose-info').textContent =
-    `X: ${poseX.toFixed(2)}m  Y: ${poseY.toFixed(2)}m  θ: ${(p.theta_deg || 0).toFixed(1)}°`;
-}
-
-// ── Waypoints ─────────────────────────────────────────────────────────────
-function addWaypoint() {
-  const name = `WP${waypoints.length + 1}`;
-  waypoints.push({ name, x: poseX, y: poseY });
-  renderWPList();
-  wsSend({ type: 'set_waypoints', waypoints });
-}
-
-function clearWaypoints() {
-  waypoints = [];
-  renderWPList();
-  wsSend({ type: 'set_waypoints', waypoints: [] });
-}
-
-function renderWPList() {
-  const list = document.getElementById('wp-list');
-  list.innerHTML = '';
-  waypoints.forEach((wp, i) => {
-    const div = document.createElement('div');
-    div.className = 'wp-item' + (i === activeWpIdx ? ' active-wp' : '');
-    div.innerHTML = `<span>${wp.name} (${wp.x.toFixed(1)}, ${wp.y.toFixed(1)})</span><span class="del" onclick="removeWP(${i})">✕</span>`;
-    list.appendChild(div);
-  });
-}
-
-function removeWP(i) {
-  waypoints.splice(i, 1);
-  renderWPList();
-  wsSend({ type: 'set_waypoints', waypoints });
-}
-
-// ── Map I/O ───────────────────────────────────────────────────────────────
-function saveMap() {
-  const name = prompt('Map name:', 'default') || 'default';
-  fetch(`/api/map/save?name=${encodeURIComponent(name)}`, { method: 'POST' })
-    .then(r => r.json()).then(d => alert('Saved: ' + d.saved));
-}
-
-function loadMap() {
-  fetch('/api/map/list').then(r => r.json()).then(d => {
-    const name = prompt('Maps: ' + d.maps.join(', ') + '\nLoad:', d.maps[0] || 'default');
-    if (name) fetch(`/api/map/load?name=${encodeURIComponent(name)}`, { method: 'POST' });
-  });
-}
-
-// ── Camera MJPEG feed ─────────────────────────────────────────────────────
-(function startCamera() {
-  const img = document.getElementById('cam-img');
-  const url = `/api/camera/stream`;
-  img.src = url;
-  let frames = 0, last = Date.now();
-  img.onload = () => {
-    frames++;
-    const now = Date.now();
-    if (now - last >= 1000) {
-      document.getElementById('hud-fps').textContent = `FPS: ${frames}`;
-      frames = 0; last = now;
-    }
-    updateDot('camera', true);
+// ── Direction pad ───────────────────────────────────────────────────────────
+function dirToMotors(dir){
+  const s = spd;
+  const map = {
+    fwd: [s, s],
+    rev: [-s, -s],
+    lft: [-s, s],
+    rgt: [s, -s],
+    stp: [0, 0],
   };
-})();
+  return map[dir] || [0,0];
+}
 
-// ── Keyboard fallback ─────────────────────────────────────────────────────
-const keysDown = new Set();
-window.addEventListener('keydown', e => {
-  if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','w','a','s','d',' '].includes(e.key)) {
-    e.preventDefault(); keysDown.add(e.key);
-  }
-  if (e.key === ' ') triggerEstop();
+function sendCmd(l, r){
+  if(estopOn || mode !== 'manual') return;
+  curL=l; curR=r;
+  io_sock.emit('cmd', {l, r});
+  setBar('ml', l); setBar('mr', r);
+  setV('tml', l); setV('tmr', r);
+}
+
+function stopMotors(){ sendCmd(0,0); }
+
+function setBar(id, v){
+  const e=document.getElementById(id);
+  const pct=Math.abs(v)/220*100;
+  e.style.width=pct+'%';
+  e.className='mb-in'+(v<0?' rev':'');
+}
+
+// D-pad press/release — send continuously while held
+document.querySelectorAll('.dp[data-dir]').forEach(btn=>{
+  const start = e=>{ e.preventDefault(); dirPressed=btn.dataset.dir; btn.classList.add('pressed'); };
+  const end   = e=>{ e.preventDefault(); dirPressed=null; btn.classList.remove('pressed'); stopMotors(); };
+  btn.addEventListener('mousedown', start);
+  btn.addEventListener('touchstart', start, {passive:false});
+  btn.addEventListener('mouseup', end);
+  btn.addEventListener('touchend', end);
+  btn.addEventListener('mouseleave', end);
 });
-window.addEventListener('keyup', e => keysDown.delete(e.key));
 
-setInterval(() => {
-  let jx = 0, jy = 0;
-  if (keysDown.has('ArrowUp')   || keysDown.has('w')) jy = 1;
-  if (keysDown.has('ArrowDown') || keysDown.has('s')) jy = -1;
-  if (keysDown.has('ArrowLeft') || keysDown.has('a')) jx = -1;
-  if (keysDown.has('ArrowRight')|| keysDown.has('d')) jx = 1;
-  if (jx !== 0 || jy !== 0) {
-    jsX = jx * speedPct; jsY = jy * speedPct;
-    updateMotorBars(jsX, jsY);
+// Command loop — 25Hz, only sends while button held
+cmdInterval = setInterval(()=>{
+  if(dirPressed && dirPressed !== 'stp'){
+    const [l,r] = dirToMotors(dirPressed);
+    sendCmd(l, r);
   }
-}, 50);
+}, 40);
 
-// ── Start ─────────────────────────────────────────────────────────────────
-connectWS();
+// ── Keyboard ────────────────────────────────────────────────────────────────
+const keyMap = {ArrowUp:'fwd', w:'fwd', ArrowDown:'rev', s:'rev', ArrowLeft:'lft', a:'lft', ArrowRight:'rgt', d:'rgt'};
+window.addEventListener('keydown', e=>{
+  if(e.key===' '){ e.preventDefault(); doEstop(); return; }
+  const dir = keyMap[e.key];
+  if(dir){ e.preventDefault(); dirPressed=dir; document.getElementById('dp-'+dir)?.classList.add('pressed'); }
+});
+window.addEventListener('keyup', e=>{
+  const dir = keyMap[e.key];
+  if(dir){ dirPressed=null; document.getElementById('dp-'+dir)?.classList.remove('pressed'); stopMotors(); }
+});
+
+// ── Mode ────────────────────────────────────────────────────────────────────
+function setMode(m){
+  mode=m;
+  ['manual','explore','patrol'].forEach(id=>document.getElementById('b'+id[0])?.classList.toggle('active',id===m));
+  const tag=document.getElementById('mtag');
+  const cls={manual:'tm',explore:'te',patrol:'tp'};
+  tag.textContent=m.toUpperCase(); tag.className='tag '+cls[m];
+  io_sock.emit('mode',{value:m});
+}
+
+// ── Safety ──────────────────────────────────────────────────────────────────
+function doEstop(){
+  estopOn=true;
+  io_sock.emit('estop');
+  const b=document.getElementById('estop');
+  b.textContent='✓ STOPPED'; b.className='stopped';
+}
+function doResume(){
+  estopOn=false;
+  io_sock.emit('estop_clear');
+  const b=document.getElementById('estop');
+  b.textContent='⏹ EMERGENCY STOP'; b.className='';
+}
+function doSave(){
+  fetch('/api/map/save?name=default',{method:'POST'})
+    .then(r=>r.json()).then(()=>alert('Map saved'))
+    .catch(()=>alert('Save not available in this mode'));
+}
+
+// ── Map canvas ──────────────────────────────────────────────────────────────
+const mc=document.getElementById('mc');
+const mctx=mc.getContext('2d');
+function drawMap(data){ /* placeholder for SLAM map */ }
 </script>
 </body>
 </html>

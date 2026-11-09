@@ -1,0 +1,23 @@
+# Mac-side processing server
+# Python 3.9+ required
+# Install: pip3 install -r requirements.txt
+
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+websockets==12.0
+python-multipart==0.0.9
+pydantic==2.9.2
+httpx==0.27.2
+anyio==4.5.2
+psutil==6.0.0
+
+# Computer vision
+opencv-python==4.10.0.84
+numpy==1.26.4
+Pillow==10.4.0
+
+# YOLO (ultralytics — works on Mac Apple Silicon + Intel)
+ultralytics==8.3.0
+
+# Optional: for VLM/scene understanding via API
+openai==1.50.0
