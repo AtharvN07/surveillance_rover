@@ -1,78 +1,78 @@
 """
-detector.py — YOLO object detection wrapper using Ultralytics.
-Runs on Mac CPU/MPS (Apple Silicon GPU automatically used if available).
+YOLO detector — runs on the Mac (MPS GPU on Apple Silicon, CPU fallback).
+Returns annotated frames + structured detections. Never crashes the server:
+any inference error returns the raw frame with an error note.
 """
 import logging
 import time
-from typing import List, Tuple, Dict
+from typing import List, Dict, Tuple
 
 import cv2
 import numpy as np
 
 log = logging.getLogger("mac.detector")
 
-# COCO class colours — consistent colour per class ID
-COLOURS = [
-    (255, 56, 56), (255, 157, 151), (255, 112, 31), (255, 178, 29),
-    (207, 210, 49), (72, 249, 10),  (146, 204, 23), (61, 219, 134),
-    (26, 147, 52),  (0, 212, 187),  (44, 153, 168), (0, 194, 255),
-    (52, 69, 147),  (100, 115, 255),(0, 24, 236),   (132, 56, 255),
-    (82, 0, 133),   (203, 56, 255), (255, 149, 200),(255, 55, 199),
-]
-
-def class_colour(cid: int) -> Tuple[int,int,int]:
-    return COLOURS[cid % len(COLOURS)]
-
-
 class Detector:
-    def __init__(self, model_name: str = "yolo11n.pt", confidence: float = 0.45):
+    def __init__(self, model_name: str = "yolo11n.pt", conf: float = 0.45):
         from ultralytics import YOLO
-        log.info("Loading YOLO model: %s", model_name)
+        self.conf = conf
         self.model = YOLO(model_name)
-        self.conf  = confidence
-        self.names = self.model.names
-        # Warm up
+        # Warm up with a dummy frame so first real frame isn't slow
         dummy = np.zeros((480, 640, 3), dtype=np.uint8)
-        self.model(dummy, verbose=False)
-        log.info("YOLO ready — %d classes, device: %s",
-                 len(self.names), self.model.device)
+        self.model.predict(dummy, conf=self.conf, verbose=False)
+        self.names = self.model.names
+        self.last_ms = 0.0
+        log.info("YOLO ready: %s (%d classes)", model_name, len(self.names))
 
     def detect(self, frame: np.ndarray) -> Tuple[np.ndarray, List[Dict]]:
-        """
-        Run inference on a BGR frame.
-        Returns (annotated_frame, detections).
-        detections = [{"label": str, "conf": float, "box": [x1,y1,x2,y2]}]
-        """
-        t0 = time.perf_counter()
-        results = self.model(frame, conf=self.conf, verbose=False)[0]
-        ms = (time.perf_counter() - t0) * 1000
+        t0 = time.time()
+        results = self.model.predict(frame, conf=self.conf, verbose=False)[0]
+        self.last_ms = (time.time() - t0) * 1000
 
+        detections = []
         annotated = frame.copy()
-        dets = []
+        h, w = annotated.shape[:2]
 
-        if results.boxes is not None:
-            for box in results.boxes:
-                x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
-                cid  = int(box.cls[0])
-                conf = float(box.conf[0])
-                label = self.names[cid]
-                colour = class_colour(cid)
+        for box in results.boxes:
+            cls_id = int(box.cls[0])
+            conf = float(box.conf[0])
+            x1, y1, x2, y2 = [int(v) for v in box.xyxy[0].tolist()]
+            label = self.names.get(cls_id, str(cls_id))
+            detections.append({
+                "label": label, "conf": round(conf, 2),
+                "box": [x1, y1, x2, y2],
+            })
+            # Draw box + label
+            cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 255, 160), 2)
+            tag = f"{label} {conf:.2f}"
+            (tw, th), _ = cv2.getTextSize(tag, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+            cv2.rectangle(annotated, (x1, y1 - th - 6), (x1 + tw + 4, y1),
+                          (0, 255, 160), -1)
+            cv2.putText(annotated, tag, (x1 + 2, y1 - 4),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1, cv2.LINE_AA)
 
-                # Bounding box
-                cv2.rectangle(annotated, (x1, y1), (x2, y2), colour, 2)
+        # HUD: inference time + detection count
+        cv2.putText(annotated, f"YOLO {self.last_ms:.0f}ms | {len(detections)} objects",
+                    (8, h - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 160), 1, cv2.LINE_AA)
+        return annotated, detections
 
-                # Label background
-                text = f"{label} {conf:.2f}"
-                (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 1)
-                cv2.rectangle(annotated, (x1, y1 - th - 6), (x1 + tw + 4, y1), colour, -1)
-                cv2.putText(annotated, text, (x1 + 2, y1 - 4),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255,255,255), 1, cv2.LINE_AA)
-
-                dets.append({"label": label, "conf": round(conf, 3),
-                             "box": [x1, y1, x2, y2]})
-
-        # Inference time HUD
-        cv2.putText(annotated, f"YOLO {ms:.0f}ms", (6, 20),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 160), 1, cv2.LINE_AA)
-
-        return annotated, dets
+    def obstacles(self, detections: List[Dict], frame_w: int = 640) -> Dict[str, float]:
+        """
+        Convert detections into per-region threat scores 0..1.
+        Anything in the bottom half of the frame is treated as blocking:
+        closer/larger box → higher threat.
+        """
+        front = left = right = 0.0
+        third = frame_w // 3
+        for d in detections:
+            x1, y1, x2, y2 = d["box"]
+            cx = (x1 + x2) / 2
+            area_ratio = ((x2 - x1) * (y2 - y1)) / float(frame_w * 480)
+            threat = min(1.0, area_ratio * 6.0)  # big box = dangerous
+            if cx < third:
+                left = max(left, threat)
+            elif cx < 2 * third:
+                front = max(front, threat)
+            else:
+                right = max(right, threat)
+        return {"front": round(front, 2), "left": round(left, 2), "right": round(right, 2)}

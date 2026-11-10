@@ -1,139 +1,67 @@
-# Surveillance Rover — Complete System
+# Surveillance Rover — Mac/Jetson Split Architecture
 
-Autonomous indoor surveillance rover using Jetson Nano + Arduino Mega + L298N.
+**Jetson = hands** (camera + motors, zero AI). **Mac = brain** (YOLO, decisions, dashboard).
 
-## Quick Start
+## Layout
 
-### 1. Flash Arduino
-Open `arduino/rover_controller.ino` in Arduino IDE.
-Install library: **Adafruit PWM Servo Driver** via Library Manager.
-Select **Arduino Mega 2560**, upload.
+    surveillance_rover/
+    ├── arduino/rover_controller.ino   # Arduino Mega firmware (L298N + watchdog)
+    ├── jetson/run_server.py           # Jetson: thin MJPEG streamer + motor relay (Flask)
+    ├── jetson/requirements.txt        # Jetson deps (system python3)
+    ├── mac_server/                    # Mac: the brain
+    │   ├── server.py                  #   FastAPI app — pulls Jetson stream, runs YOLO, serves dashboard
+    │   ├── detector.py                #   YOLO wrapper (auto-downloads yolo11n.pt)
+    │   ├── jetson_client.py           #   Plain HTTP client → Jetson (/cmd /estop ...)
+    │   ├── vlm.py                     #   Optional GPT-4o-mini scene descriptions
+    │   ├── config.py                  #   JETSON_URL etc.
+    │   ├── static/index.html          #   Dashboard (open http://<mac-ip>:9000)
+    │   └── requirements.txt
+    └── config/                        # wiring.md, rover.env.example
 
-### 2. Jetson Nano — install dependencies
-```bash
-cd surveillance_rover
-pip3 install -r requirements.txt --break-system-packages
-```
+## 1. Arduino (one-time)
 
-### 3. Configure
-```bash
-cp config/rover.env.example config/rover.env
-# Edit ARDUINO_PORT, camera settings, etc.
-```
+Flash `arduino/rover_controller.ino` with Arduino IDE. Serial Monitor @115200 → type `PING`, expect `PONG`.
 
-### 4. Run
-```bash
-export $(cat config/rover.env | xargs)
-uvicorn app.main:app --host 0.0.0.0 --port 8000
-```
+## 2. Jetson (every session)
 
-### 5. Open Dashboard
-Navigate to `http://<jetson-ip>:8000` from any browser on the same network.
+    sudo systemctl start nvargus-daemon
+    cd ~/surveillance_rover/jetson
+    python3 run_server.py
 
----
+Test:  `curl http://192.168.31.122:8000/health` → `{"status":"ok","arduino":true}`
 
-## Operating Modes
+## 3. Mac (every session)
 
-| Mode | Description |
-|------|-------------|
-| Manual | Joystick control, progressive PWM, full camera feed |
-| Explore | Autonomous room scanning, SLAM map building |
-| Patrol | Navigate between defined waypoints indefinitely |
+    cd mac_server
+    pip3 install -r requirements.txt
+    export JETSON_URL=http://192.168.31.122:8000
+    python3 server.py
+    # open http://localhost:9000
 
----
+The Mac pulls the Jetson's MJPEG stream, runs YOLO per frame, draws boxes,
+and serves the annotated feed to any browser on the LAN.
 
-## Hardware Wiring
+## Controls
 
-See `config/wiring.md` for full pin diagram.
+Arrow keys / WASD drive · Space = ESTOP · 1-5 = speed presets · or use the D-pad.
+Max speed is the default preset; nothing finer-grained is needed for direct control.
 
-**L298N → Arduino Mega**
+## Optional: VLM scene understanding
 
-| L298N | Arduino Mega Pin |
-|-------|-----------------|
-| ENA   | D5 (PWM)        |
-| IN1   | D7              |
-| IN2   | D8              |
-| IN3   | D9              |
-| IN4   | D10             |
-| ENB   | D6 (PWM)        |
-| GND   | GND             |
+    export OPENAI_API_KEY=sk-...
+    python3 server.py
 
-**CSI Camera → Jetson Nano**
-- Connect ribbon cable to CAM0 CSI port (30-pin connector, contacts facing heatsink)
+The rover then captions its camera view every 8 s on the dashboard.
+Without the key, YOLO-only mode runs unchanged.
 
----
+## Optional: Explore / patrol modes
 
-## Serial Protocol (Arduino)
+Currently EXPLORE/PATROL buttons set the mode flag; autonomous navigation
+runs on the Jetson's own ROS2 workspace instead (see ~/ros2_ws on the Jetson).
+To route exploration decisions through the Mac, extend `server.py`'s `/api/mode`
+handler — the Mac already owns the detection stream needed for it.
 
-| Command       | Response     | Description                      |
-|---------------|--------------|----------------------------------|
-| `PING\n`      | `PONG`       | Heartbeat                        |
-| `M:L,R\n`     | `OK:M`       | Set motors (-255..255 each)      |
-| `E\n`         | `OK:ESTOP`   | Emergency stop                   |
-| `STATUS\n`    | `OK:STATUS:L,R` | Current motor PWM              |
-| `MAXSPD:N\n`  | `OK:MAXSPD:N` | Set speed ceiling (0-255)       |
-| `ACCEL:N\n`   | `OK:ACCEL:N`  | Set acceleration step (1-50)    |
-| `RESUME\n`    | `OK:RESUME`   | Clear emergency stop             |
+## Safety chain
 
----
-
-## WebSocket API
-
-Connect to `ws://<host>:8000/ws/control`
-
-**Send:**
-```json
-{ "type": "joystick", "x": 0.5, "y": 0.8 }
-{ "type": "estop" }
-{ "type": "estop_clear" }
-{ "type": "mode", "value": "manual|explore|patrol" }
-{ "type": "ping" }
-```
-
-**Receive:**
-```json
-{ "type": "pong", "t": 1234567890.123 }
-{ "type": "estop_ack" }
-{ "type": "mode_ack", "mode": "manual" }
-```
-
-Telemetry stream: `ws://<host>:8000/ws/telemetry`
-Map stream: `ws://<host>:8000/ws/map`
-
----
-
-## REST API
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/health` | GET | Health check |
-| `/api/status` | GET | System status |
-| `/api/mode` | POST | Set mode |
-| `/api/estop` | POST | Emergency stop |
-| `/api/estop/clear` | POST | Clear ESTOP |
-| `/api/camera/stream` | GET | MJPEG stream |
-| `/api/camera/snapshot` | GET | JPEG snapshot |
-| `/api/map/current` | GET | Occupancy grid JSON |
-| `/api/map/save?name=X` | POST | Save map |
-| `/api/map/list` | GET | List saved maps |
-| `/api/odometry` | GET | Current pose |
-
----
-
-## Hardware Assessment Notes
-
-**Current single CSI camera limitations:**
-- Cannot provide reliable metric depth without stereo or LiDAR
-- Monocular visual odometry has scale ambiguity — fused with wheel PWM odometry
-- Obstacle detection relies on optical flow + edge density heuristics
-- For production-grade SLAM, add: Intel RealSense D435 or RPLidar A1
-
-**Recommended sensor additions (priority order):**
-1. Wheel encoders on both drive motors (fixes odometry scale drift)
-2. MPU-6050 IMU via I2C (improves rotation estimate)
-3. 2D LiDAR e.g. RPLidar A1 (~$100) for reliable room mapping
-
-**With only CSI camera, expect:**
-- Obstacle avoidance: functional in good lighting (>300 lux)
-- Map accuracy: ±0.5m drift over 10m travel
-- Loop closure: not supported without additional sensors
+Browser disconnect → Mac stops motors → Jetson watchdog (0.5 s) also stops motors
+→ Arduino itself zeroes PWM on `E`. Any single failure stops the rover.
